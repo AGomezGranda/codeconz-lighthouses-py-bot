@@ -42,83 +42,80 @@ class BotGame:
 
     def new_turn_action(self, turn: game_pb2.NewTurn) -> game_pb2.NewAction:
         cx, cy = turn.Position.X, turn.Position.Y
+        current_pos = (cx, cy)
 
-        lighthouses = dict()
-        for lh in turn.Lighthouses:
-            lighthouses[(lh.Position.X, lh.Position.Y)] = lh
+        # Build lighthouse map
+        lighthouses = {(lh.Position.X, lh.Position.Y): lh for lh in turn.Lighthouses}
+        current_lh = lighthouses.get(current_pos)
 
-        # Si estamos en un faro...
-        if (cx, cy) in lighthouses:
-            # Conectar con faro remoto válido si podemos
-            if lighthouses[(cx, cy)].Owner == self.player_num:
-                possible_connections = []
-                for dest in lighthouses:
-                    # No conectar con sigo mismo
-                    # No conectar si no tenemos la clave
-                    # No conectar si ya existe la conexión
-                    # No conectar si no controlamos el destino
-                    # Nota: no comprobamos si la conexión se cruza.
-                    if (
-                        dest != (cx, cy)
-                        and lighthouses[dest].HaveKey
-                        and [cx, cy] not in lighthouses[dest].Connections
-                        and lighthouses[dest].Owner == self.player_num
-                    ):
-                        possible_connections.append(dest)
-
-                if possible_connections:
-                    possible_connection = random.choice(possible_connections)
-                    action = game_pb2.NewAction(
+        # === CONNECT ===
+        if current_lh and current_lh.Owner == self.player_num and turn.HaveKey:
+            for dest_pos, lh in lighthouses.items():
+                if (
+                    dest_pos != current_pos
+                    and lh.Owner == self.player_num
+                    and [cx, cy] not in lh.Connections
+                    and lh.HaveKey
+                ):
+                    return game_pb2.NewAction(
                         Action=game_pb2.CONNECT,
-                        Destination=game_pb2.Position(
-                            X=possible_connection[0], Y=possible_connection[1]
-                        ),
+                        Destination=game_pb2.Position(X=dest_pos[0], Y=dest_pos[1])
                     )
-                    bgt = BotGameTurn(turn, action)
-                    self.turn_states.append(bgt)
 
-                    self.countT += 1
-                    return action
-
-            # 60% de posibilidades de atacar el faro
-            if random.randrange(100) < 60:
-                energy = random.randrange(turn.Energy + 1)
-                action = game_pb2.NewAction(
+        # === ATTACK ===
+        if current_lh and current_lh.Owner != self.player_num:
+            if turn.Energy > 0:
+                attack_energy = min(10, turn.Energy)
+                return game_pb2.NewAction(
                     Action=game_pb2.ATTACK,
-                    Energy=energy,
-                    Destination=game_pb2.Position(X=turn.Position.X, Y=turn.Position.Y),
+                    Energy=attack_energy,
+                    Destination=game_pb2.Position(X=cx, Y=cy)
                 )
-                bgt = BotGameTurn(turn, action)
-                self.turn_states.append(bgt)
 
-                self.countT += 1
-                return action
+        # === MOVE ===
+        local_energy = {(cell.Position.X, cell.Position.Y): cell.Energy for cell in turn.Cells}
 
-        # Mover aleatoriamente
+        # Prioritize unowned or enemy lighthouses
+        ratios = {}
+        for lh in turn.Lighthouses:
+            if lh.Owner != self.player_num:
+                pos = (lh.Position.X, lh.Position.Y)
+                dist = abs(cx - pos[0]) + abs(cy - pos[1])
+                ratio = (lh.Energy + 1) / (dist + 1)
+                ratios[pos] = ratio
 
-        # Buscar el faro apropiado basado en el ratio
-        # Movernos en la direcciñon adecuada, dandole nuestra posicion y la del faro que buscamos
+        if ratios:
+            target = max(ratios, key=ratios.get)
+        else:
+            target = random.choice(list(lighthouses.keys()))
 
-        lighthouses_ratio = {}
-        for lighthouse in turn.Lighthouses:
-            ratio = self.compute_ratio(turn.Position, lighthouse)
-            lighthouses_ratio[(lighthouse.Position.X, lighthouse.Position.Y, lighthouse.Owner)] = ratio
+        next_move = self.best_adjacent_move(current_pos, target, local_energy)
+        nx, ny = cx + next_move[0], cy + next_move[1]
 
-        chosen_lighthouse = self.get_chosen_lighthouse(lighthouses_ratio)
-        next_movement = self.get_next_movement(turn.Position, chosen_lighthouse)
-        move = next_movement
-        action = game_pb2.NewAction(
+        return game_pb2.NewAction(
             Action=game_pb2.MOVE,
-            Destination=game_pb2.Position(
-                X=turn.Position.X + move[0], Y=turn.Position.Y + move[1]
-            ),
+            Destination=game_pb2.Position(X=nx, Y=ny)
         )
 
-        bgt = BotGameTurn(turn, action)
-        self.turn_states.append(bgt)
+    def best_adjacent_move(self, current_pos, target_pos, energy_map):
+        cx, cy = current_pos
+        tx, ty = target_pos
 
-        self.countT += 1
-        return action
+        best_score = float('-inf')
+        best_move = (0, 0)
+
+        for dx, dy in MOVES:
+            nx, ny = cx + dx, cy + dy
+            if 0 <= nx < 15 and 0 <= ny < 15:
+                dist = abs(tx - nx) + abs(ty - ny)
+                energy = energy_map.get((nx, ny), 0)
+                score = -dist + energy * 0.1
+                if score > best_score:
+                    best_score = score
+                    best_move = (dx, dy)
+
+        return best_move
+
 
     def compute_ratio(self, our_position, lighthouse):
         energy = lighthouse.Energy
