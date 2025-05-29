@@ -127,19 +127,22 @@ class BotGame:
         return ratio
 
     def get_chosen_lighthouse(self, all_lighthouses):
-        filtered = {lh: ratio for lh, ratio in all_lighthouses.items() if lh[2] != self.player_num}
+        # Prioritize enemy lighthouses with high energy and low distance
+        filtered = {
+            lh: ratio for lh, ratio in all_lighthouses.items()
+            if lh[2] != self.player_num  # Exclude owned lighthouses
+        }
         return max(filtered, key=filtered.get) if filtered else None
 
     def get_next_movement(self, current_position, target_lighthouse):
-        dy = target_lighthouse[1] - current_position.Y
         dx = target_lighthouse[0] - current_position.X
-        if dy > 0:
-            return Movements.TOP.value
-        elif dy < 0:
-            return Movements.BOT.value
-        elif dx > 0:
-            return Movements.RIGHT.value
-        return Movements.LEFT.value
+        dy = target_lighthouse[1] - current_position.Y
+
+        # Move in the direction of the target lighthouse
+        if abs(dx) > abs(dy):  # Prioritize horizontal movement
+            return Movements.RIGHT.value if dx > 0 else Movements.LEFT.value
+        else:  # Prioritize vertical movement
+            return Movements.TOP.value if dy > 0 else Movements.BOT.value
 
 class BotComs:
     def __init__(self, bot_name, my_address, game_server_address, verbose=False):
