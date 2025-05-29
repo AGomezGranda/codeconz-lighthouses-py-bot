@@ -66,8 +66,11 @@ class BotGame:
                     ):
                         possible_connections.append(dest)
 
+                # Prioritize unconnected lighthouses (fewest connections)
                 if possible_connections:
-                    possible_connection = random.choice(possible_connections)
+                    # Sort by number of connections (ascending)
+                    possible_connections.sort(key=lambda d: len(lighthouses[d].Connections))
+                    possible_connection = possible_connections[0]
                     action = game_pb2.NewAction(
                         Action=game_pb2.CONNECT,
                         Destination=game_pb2.Position(
@@ -93,11 +96,6 @@ class BotGame:
 
                 self.countT += 1
                 return action
-
-        # Mover aleatoriamente
-
-        # Buscar el faro apropiado basado en el ratio
-        # Movernos en la direcciñon adecuada, dandole nuestra posicion y la del faro que buscamos
 
         lighthouses_ratio = {}
         for lighthouse in turn.Lighthouses:
