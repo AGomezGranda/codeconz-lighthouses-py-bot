@@ -28,71 +28,137 @@ class BotGame:
 
     def new_turn_action(self, turn: game_pb2.NewTurn) -> game_pb2.NewAction:
         cx, cy = turn.Position.X, turn.Position.Y
+        current_pos = (cx, cy)
 
-        lighthouses = dict()
-        for lh in turn.Lighthouses:
-            lighthouses[(lh.Position.X, lh.Position.Y)] = lh
+        lighthouses = {(lh.Position.X, lh.Position.Y): lh for lh in turn.Lighthouses}
+        current_lh = lighthouses.get(current_pos)
 
-        # Si estamos en un faro...
-        if (cx, cy) in lighthouses:
-            # Conectar con faro remoto válido si podemos
-            if lighthouses[(cx, cy)].Owner == self.player_num:
-                possible_connections = []
-                for dest in lighthouses:
-                    # No conectar con sigo mismo
-                    # No conectar si no tenemos la clave
-                    # No conectar si ya existe la conexión
-                    # No conectar si no controlamos el destino
-                    # Nota: no comprobamos si la conexión se cruza.
-                    if (
-                        dest != (cx, cy)
-                        and lighthouses[dest].HaveKey
-                        and [cx, cy] not in lighthouses[dest].Connections
-                        and lighthouses[dest].Owner == self.player_num
-                    ):
-                        possible_connections.append(dest)
+        local_energy = {(cell.Position.X, cell.Position.Y): cell.Energy for cell in turn.Cells}
 
-                if possible_connections:
-                    possible_connection = random.choice(possible_connections)
-                    action = game_pb2.NewAction(
-                        Action=game_pb2.CONNECT,
-                        Destination=game_pb2.Position(
-                            X=possible_connection[0], Y=possible_connection[1]
-                        ),
-                    )
-                    bgt = BotGameTurn(turn, action)
-                    self.turn_states.append(bgt)
+        have_key = turn.HaveKey  # Asumiendo que este atributo indica si tienes llave actualmente
+        # Si no existiera, habría que trackearla internamente
 
-                    self.countT += 1
-                    return action
+        moves = [(-1, -1), (-1, 0), (-1, 1),
+                 (0, -1), (0, 1),
+                 (1, -1), (1, 0), (1, 1)]
 
-            # 60% de posibilidades de atacar el faro
-            if random.randrange(100) < 60:
-                energy = random.randrange(turn.Energy + 1)
+        # Función para distancia Manhattan
+        def manhattan(a, b):
+            return abs(a[0] - b[0]) + abs(a[1] - b[1])
+
+        if have_key:
+            # Ya tienes llave, debes dirigirte a otro faro propio para conectar
+
+            # Faros propios distintos al actual
+            target_lighthouses = [
+                pos for pos, lh in lighthouses.items()
+                if lh.Owner == self.player_num and pos != current_pos
+            ]
+
+            # Filtramos faros donde no exista conexión con el actual
+            target_lighthouses = [
+                pos for pos in target_lighthouses
+                if current_pos not in lighthouses[pos].Connections
+            ]
+
+            # Si estamos en un faro propio y existe faro objetivo para conectar, conectamos
+            if current_lh and current_lh.Owner == self.player_num and target_lighthouses:
+                # Si la llave es del faro donde estamos (asumimos que sí)
+                # y el faro destino es uno de los posibles
+                target = random.choice(target_lighthouses)
                 action = game_pb2.NewAction(
-                    Action=game_pb2.ATTACK,
-                    Energy=energy,
-                    Destination=game_pb2.Position(X=turn.Position.X, Y=turn.Position.Y),
+                    Action=game_pb2.CONNECT,
+                    Destination=game_pb2.Position(X=target[0], Y=target[1])
                 )
-                bgt = BotGameTurn(turn, action)
-                self.turn_states.append(bgt)
-
+                self.turn_states.append(BotGameTurn(turn, action))
                 self.countT += 1
                 return action
 
-        # Mover aleatoriamente
-        moves = ((-1, -1), (-1, 0), (-1, 1), (0, -1), (0, 1), (1, -1), (1, 0), (1, 1))
+            # Si no estamos en faro destino, movernos hacia el faro propio más cercano
+            if target_lighthouses:
+                target = min(target_lighthouses, key=lambda p: manhattan(current_pos, p))
+                # Elegir movimiento que acerque a target, priorizando energía
+                best_move = None
+                best_score = -float('inf')
+                for dx, dy in moves:
+                    nx, ny = cx + dx, cy + dy
+                    if 0 <= nx < 15 and 0 <= ny < 15:
+                        dist = manhattan((nx, ny), target)
+                        energy_here = local_energy.get((nx, ny), 0)
+                        # Combinamos energía y cercanía (prioridad distancia)
+                        score = (15 - dist) * 2 + energy_here
+                        if score > best_score:
+                            best_score = score
+                            best_move = (nx, ny)
+                if best_move:
+                    action = game_pb2.NewAction(
+                        Action=game_pb2.MOVE,
+                        Destination=game_pb2.Position(X=best_move[0], Y=best_move[1])
+                    )
+                    self.turn_states.append(BotGameTurn(turn, action))
+                    self.countT += 1
+                    return action
+
+        else:
+            # No tienes llave: moverse a un faro propio para conseguirla
+            target_lighthouses = [
+                pos for pos, lh in lighthouses.items()
+                if lh.Owner == self.player_num and pos != current_pos
+            ]
+
+            # Si estás en faro propio y no tienes llave, ya deberías tenerla (por regla)
+            # Si no, significa que tienes que moverte a uno
+            if current_lh and current_lh.Owner == self.player_num:
+                # Probablemente acabas de llegar, esperarás llave en siguiente turno
+                # No puedes quedarte quieto, así que mueve a casilla cercana con más energía
+                best_move = None
+                best_energy = -1
+                for dx, dy in moves:
+                    nx, ny = cx + dx, cy + dy
+                    if 0 <= nx < 15 and 0 <= ny < 15:
+                        energy_here = local_energy.get((nx, ny), 0)
+                        if energy_here > best_energy:
+                            best_energy = energy_here
+                            best_move = (nx, ny)
+                if best_move:
+                    action = game_pb2.NewAction(
+                        Action=game_pb2.MOVE,
+                        Destination=game_pb2.Position(X=best_move[0], Y=best_move[1])
+                    )
+                    self.turn_states.append(BotGameTurn(turn, action))
+                    self.countT += 1
+                    return action
+
+            if target_lighthouses:
+                # Ir al faro propio más cercano para recoger llave
+                target = min(target_lighthouses, key=lambda p: manhattan(current_pos, p))
+                best_move = None
+                best_score = -float('inf')
+                for dx, dy in moves:
+                    nx, ny = cx + dx, cy + dy
+                    if 0 <= nx < 15 and 0 <= ny < 15:
+                        dist = manhattan((nx, ny), target)
+                        energy_here = local_energy.get((nx, ny), 0)
+                        score = (15 - dist) * 2 + energy_here
+                        if score > best_score:
+                            best_score = score
+                            best_move = (nx, ny)
+                if best_move:
+                    action = game_pb2.NewAction(
+                        Action=game_pb2.MOVE,
+                        Destination=game_pb2.Position(X=best_move[0], Y=best_move[1])
+                    )
+                    self.turn_states.append(BotGameTurn(turn, action))
+                    self.countT += 1
+                    return action
+
+        # Si no se cumplió nada de lo anterior, fallback mover aleatorio para no quedarse quieto
         move = random.choice(moves)
         action = game_pb2.NewAction(
             Action=game_pb2.MOVE,
-            Destination=game_pb2.Position(
-                X=turn.Position.X + move[0], Y=turn.Position.Y + move[1]
-            ),
+            Destination=game_pb2.Position(X=cx + move[0], Y=cy + move[1])
         )
-
-        bgt = BotGameTurn(turn, action)
-        self.turn_states.append(bgt)
-
+        self.turn_states.append(BotGameTurn(turn, action))
         self.countT += 1
         return action
 
