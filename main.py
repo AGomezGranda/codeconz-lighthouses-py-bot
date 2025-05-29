@@ -27,45 +27,42 @@ class BotGame:
         self.countT = 1
         self.lastY = 0
         self.lastX = 0
-        self.map_width = 15  # Fixed map size
+        self.map_width = 15
         self.map_height = 15
         self.corner_positions = [(0, 0), (0, 14), (14, 0), (14, 14)]
-        self.known_lighthouse_positions = set()  # Track all lighthouse positions
+        self.known_lighthouse_positions = set()
 
     def calculate_triangle_area(self, p1, p2, p3):
-        """Calculate area of triangle using shoelace formula"""
         x1, y1 = p1
         x2, y2 = p2
         x3, y3 = p3
         return abs((x1 * (y2 - y3) + x2 * (y3 - y1) + x3 * (y1 - y2)) / 2.0)
 
-    def find_best_connection(self, current_pos, owned_lighthouses):
-        """Find the connection that creates the largest triangle area"""
+    def find_best_connection(self, current_pos, owned_lh):
         cx, cy = current_pos
         
-        if len(owned_lighthouses) < 2:
+        if len(owned_lh) < 2:
             return None
             
         best_target = None
         max_area = 0
         
-        for target in owned_lighthouses:
+        for target in owned_lh:
             target_pos = (target.Position.X, target.Position.Y)
             if target_pos == (cx, cy):
                 continue
                 
-            for third in owned_lighthouses:
+            for third in owned_lh:
                 third_pos = (third.Position.X, third.Position.Y)
                 if third_pos == (cx, cy) or third_pos == target_pos:
                     continue
                     
                 area = self.calculate_triangle_area((cx, cy), target_pos, third_pos)
                 
-                # Bonus for corner-to-corner connections (massive triangles)
                 if target_pos in self.corner_positions and third_pos in self.corner_positions:
-                    area += 100  # Huge bonus for corner triangles
+                    area += 100
                 elif target_pos in self.corner_positions or third_pos in self.corner_positions:
-                    area += 25   # Smaller bonus for one corner
+                    area += 25
                 
                 if area > max_area:
                     max_area = area
@@ -75,7 +72,7 @@ class BotGame:
 
     def new_turn_action(self, turn: game_pb2.NewTurn) -> game_pb2.NewAction:
         cx, cy = turn.Position.X, turn.Position.Y
-        
+        current_pos = (cx, cy)
         self.lastY = cy
         self.lastX = cx
         
@@ -87,9 +84,9 @@ class BotGame:
             # Memorize all lighthouse positions we've seen
             self.known_lighthouse_positions.add(pos)
 
-        if (cx, cy) in lighthouses:
+        if current_pos in lighthouses:
             # Conectar con faro remoto válido si podemos
-            if lighthouses[(cx, cy)].Owner == self.player_num:
+            if lighthouses[current_pos].Owner == self.player_num:
                 possible_connections = []
                 for dest in lighthouses:
                     # No conectar con sigo mismo
@@ -98,7 +95,7 @@ class BotGame:
                     # No conectar si no controlamos el destino
                     # Nota: no comprobamos si la conexión se cruza.
                     if (
-                        dest != (cx, cy)
+                        dest != current_pos
                         and lighthouses[dest].HaveKey
                         and not any(conn.X == cx and conn.Y == cy for conn in lighthouses[dest].Connections)
                         and lighthouses[dest].Owner == self.player_num
@@ -108,7 +105,7 @@ class BotGame:
                 if possible_connections:
                     owned_lighthouses = [lh for lh in turn.Lighthouses if lh.Owner == self.player_num]
                     
-                    best_connection = self.find_best_connection((cx, cy), owned_lighthouses)
+                    best_connection = self.find_best_connection(current_pos, owned_lighthouses)
                     
                     if best_connection and best_connection in possible_connections:
                         possible_connection = best_connection
@@ -126,7 +123,7 @@ class BotGame:
                     self.countT += 1
                     return action
 
-            lighthouse_energy = lighthouses[(cx, cy)].Energy
+            lighthouse_energy = lighthouses[current_pos].Energy
             if turn.Energy > lighthouse_energy:
                 min_energy = lighthouse_energy + 1
                 energy_ratio = turn.Energy / max(min_energy, 1)
