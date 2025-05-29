@@ -47,17 +47,22 @@ class BotGame:
         for lh in turn.Lighthouses:
             lighthouses[(lh.Position.X, lh.Position.Y)] = lh
 
-        # If we are at a lighthouse...
+        # Si estamos en un faro...
         if (cx, cy) in lighthouses:
-            # Connect to another valid lighthouse if possible
-            if lighthouses[(cx, cy)].Owner == self.player_num and lighthouses[(cx, cy)].HaveKey:
+            # Conectar con faro remoto válido si podemos
+            if lighthouses[(cx, cy)].Owner == self.player_num:
                 possible_connections = []
                 for dest in lighthouses:
+                    # No conectar con sigo mismo
+                    # No conectar si no tenemos la clave
+                    # No conectar si ya existe la conexión
+                    # No conectar si no controlamos el destino
+                    # Nota: no comprobamos si la conexión se cruza.
                     if (
-                            dest != (cx, cy)  # Not the same lighthouse
-                            and lighthouses[dest].HaveKey  # Destination has a key
-                            and [cx, cy] not in lighthouses[dest].Connections  # Not already connected
-                            and lighthouses[dest].Owner == self.player_num  # Owned by the bot
+                        dest != (cx, cy)
+                        and lighthouses[dest].HaveKey
+                        and [cx, cy] not in lighthouses[dest].Connections
+                        and lighthouses[dest].Owner == self.player_num
                     ):
                         possible_connections.append(dest)
 
@@ -75,9 +80,9 @@ class BotGame:
                     self.countT += 1
                     return action
 
-            # 60% chance to attack the lighthouse
-            if random.randrange(100) < 60 and turn.Energy > lighthouses[(cx, cy)].Energy:
-                energy = min(turn.Energy, lighthouses[(cx, cy)].Energy + 1)  # Use just enough energy to win
+            # 60% de posibilidades de atacar el faro
+            if random.randrange(100) < 60:
+                energy = random.randrange(turn.Energy + 1)
                 action = game_pb2.NewAction(
                     Action=game_pb2.ATTACK,
                     Energy=energy,
@@ -89,7 +94,11 @@ class BotGame:
                 self.countT += 1
                 return action
 
-        # Move randomly or towards a chosen lighthouse
+        # Mover aleatoriamente
+
+        # Buscar el faro apropiado basado en el ratio
+        # Movernos en la direcciñon adecuada, dandole nuestra posicion y la del faro que buscamos
+
         lighthouses_ratio = {}
         for lighthouse in turn.Lighthouses:
             ratio = self.compute_ratio(turn.Position, lighthouse)
